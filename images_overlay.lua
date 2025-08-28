@@ -2,7 +2,7 @@
   Images Overlay
   Created by Juimun ❤❤❤
   GitHub: https://github.com/Juimun/uc-dota2-scripts
-  Version: 2.2 
+  Version: 2.2.1
   Description: Показывает на экране выбранное изображение из списка
 ]]--
 
@@ -26,6 +26,10 @@ local CONFIG = { --CONGIFS
     WARNING_ALPHA = 255,
     MAX_DISTANCE = 150,
     WARNING_DISTANCE = 350,
+    MODE = { --MODE
+      STATIC = "Static",
+      DYNAMIC = "Dynamic"
+    } --MODE
   }, --OPACITY
   BORDER = { --BORDER
     MIN = 0,
@@ -226,7 +230,7 @@ local UI = { --UI
   end, --SetBorderState
 
   SetOpacityState = function(ui, mode)
-    if mode == "Static" then
+    if mode == CONFIG.OPACITY.MODE.STATIC then
       ui.dynamic_opacity_scale:Visible(false)
       ui.static_opacity_scale:Visible(true)
       ui.warning_opacity_scale:Visible(false)
@@ -311,30 +315,22 @@ function script:CreateUI(keys)
     custom_scale = self.image_settings:Slider("Image Scale", CONFIG.SCALE.MIN, CONFIG.SCALE.MAX, CONFIG.SCALE.MIN),
     custom_rounding = self.image_settings:Slider("Rounding Scale", CONFIG.SCALE.MIN, CONFIG.SCALE.MAX, CONFIG.SCALE.MIN),
     --#region Opacity
-    alpha_selector = self.image_settings:Combo("Opacity Mode", {"Static", "Dynamic"}),
+    alpha_selector = self.image_settings:Combo("Opacity Mode", {CONFIG.OPACITY.MODE.STATIC, CONFIG.OPACITY.MODE.DYNAMIC}),
     dynamic_opacity_scale = self.image_settings:Slider("Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.DYNAMIC_ALPHA, CONFIG.OPACITY.MIN_ALPHA),
     static_opacity_scale = self.image_settings:Slider("Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.MAX_ALPHA, CONFIG.OPACITY.MAX_ALPHA),
     warning_opacity_scale = self.image_settings:Slider("Warning Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.MAX_ALPHA, CONFIG.OPACITY.MAX_ALPHA),
     --#endregion Opacity
 
     --Settings
-    border_switch = self.border_settings:Switch("Enable Border", false), 
+    border_switch = self.border_settings:Switch("Enable Border", false),
     border_thickness = self.border_settings:Slider("Border Scale", CONFIG.BORDER.MIN, CONFIG.BORDER.MAX, CONFIG.BORDER.MIN),
     border_color = self.border_settings:ColorPicker("Border Color", CONFIG.BORDER.DEFAULT_COLOR),
+
+    -- Buttons
+    add_item = self.list_settings:Button("Add link to List Images", function() self:AddItem() end),
+    remove_item = self.list_settings:Button("Remove link to List Images", function() self:RemoveItem() end),
+    default_item = self.list_settings:Button("Default List Images", function() self:DefaultItem() end),
   } --ui
-
-  local script_ref = self
-  self.add_item = self.list_settings:Button("Add link to List Images", function ()
-    script_ref:AddItem()
-  end)
-
-  self.remove_item = self.list_settings:Button("Remove link to List Images", function ()
-    script_ref:RemoveItem()
-  end)
-
-  self.default_item = self.list_settings:Button("Default List Images", function ()
-    script_ref:DefaultItem()
-  end)
 
   self:DecorationUI(self.ui, self.header)
 end --CreateUI
@@ -366,9 +362,9 @@ function script:DecorationUI(ui, header)
   --#region ToolTips
   ui.global_switch:ToolTip(CONFIG.TEXT.TOOLTIP.MAIN)
 
-  self.add_item:ToolTip(CONFIG.TEXT.TOOLTIP.ADD_BUTTON)
-  self.remove_item:ToolTip(CONFIG.TEXT.TOOLTIP.REMOVE_BUTTON)
-  self.default_item:ToolTip(CONFIG.TEXT.TOOLTIP.DEFAULT_BUTTON)
+  ui.add_item:ToolTip(CONFIG.TEXT.TOOLTIP.ADD_BUTTON)
+  ui.remove_item:ToolTip(CONFIG.TEXT.TOOLTIP.REMOVE_BUTTON)
+  ui.default_item:ToolTip(CONFIG.TEXT.TOOLTIP.DEFAULT_BUTTON)
 
   ui.dynamic_opacity_scale:ToolTip(CONFIG.TEXT.TOOLTIP.OPACITY_BUTTON)
   ui.warning_opacity_scale:ToolTip(CONFIG.TEXT.TOOLTIP.WARNING_BUTTON)
@@ -394,7 +390,7 @@ function script:CallbacksUI()
   end, true)
 
   -- Инициализация состояний
-  UI.SetControlsState(script, script.ui.global_switch:Get())
+  UI.SetControlsState(script.ui, script.ui.global_switch:Get())
   UI.SetBorderState(script.ui, script.ui.border_switch:Get() and script.ui.global_switch:Get())
   UI.SetOpacityState(script.ui, script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1])
   UI.UpdateOpacityLimits(script.ui)
@@ -424,9 +420,6 @@ function script:AddItem()
 
     if #keys == 1 and keys[1] == CONFIG.NONE then
       self.data[CONFIG.NONE] = nil
-
-      self.ui.border_switch:Disabled(false)
-      self.ui.preset_selector:Disabled(false)
     end --if
 
     keys = Data:AddItem(self.data, new_name, new_link)
@@ -455,9 +448,6 @@ function script:RemoveItem()
 
   if #keys == 1 and keys[1] == CONFIG.NONE then
     self.ui.border_switch:Set(false)
-
-    self.ui.border_switch:Disabled(true)
-    self.ui.preset_selector:Disabled(true)
   end --if
 
   self.ui.preset_selector:Set(0)
@@ -508,7 +498,7 @@ function script:OnDraw()
   local distance = Utils.Calculate.MouseDistance(scaled_image.pos, scaled_image.size)
 
   local alpha
-  if script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1] == "Static" then
+  if script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1] == CONFIG.OPACITY.MODE.STATIC then
     alpha = script.ui.static_opacity_scale:Get()
   else
     alpha = Utils.Calculate.Opacity(distance, script.ui.dynamic_opacity_scale:Get(), script.ui.warning_opacity_scale:Get())
