@@ -2,7 +2,7 @@
   Images Overlay
   Created by Juimun ❤❤❤
   GitHub: https://github.com/Juimun/uc-dota2-scripts
-  Version: 2.1 - Reliable
+  Version: 2.2 
   Description: Показывает на экране выбранное изображение из списка
 ]]--
 
@@ -33,43 +33,67 @@ local CONFIG = { --CONGIFS
     DEFAULT_COLOR = Color(255, 0, 0, 255)
   }, --BORDER
   UI = { --UI
-    OFFSET_STEP = 0.0005,
+    STEP_OFFSET = 0.0005,
     BASE_OFFSET = 0.053,
     BASE_Y_OFFSET = 0.045,
-    BASE_SIZE = 0.033
+    BASE_SIZE = 0.033,
+    MENU_NAMES = {
+      "preset_selector", "custom_name", "custom_link",
+      "add_item", "remove_item", "default_item", "custom_scale",
+      "custom_rounding", "alpha_selector", "dynamic_opacity_scale",
+      "static_opacity_scale", "warning_opacity_scale", "border_switch",
+      "border_thickness", "border_color",
+    },
   }, --UI
+  ICONS = {
+    HEADER = "\u{1F58C}",
+    SWITCH = "\u{f00c}",
+    COMBO = "\u{1F4CB}",
+    INPUT = "\u{1F520}",
+    LINK = "\u{1F517}",
+    SCALE = "\u{f1ce}",
+    COLOR = "\u{f53f}",
+    OPACITY = "\u{1F4A7}",
+  }, --ICONS
+  TEXT = { --TEXT
+    TOOLTIP = { --TOOLTIP
+      MAIN = "❤❤❤",
+      ADD_BUTTON = "Enter the name and link to the image, then click the button to add it",
+      REMOVE_BUTTON = "Select the desired image from the list, then click the button to delete it",
+      DEFAULT_BUTTON = "Restores default settings",
+      OPACITY_SCALE = "Maximum transparency in the image area",
+      WARNING_SCALE = "Maximum transparency in the area in front of the image"
+    } --TOOLTIP
+  } --TEXT
 } --CONGIFS
+
 
 local JSON = require('assets.JSON')
 
--- Попробовать изменить структуру
-local function Trim(str)
-  return string.match(str, "^%s*(.-)%s*$") or ""
-end
-
-local function IsNotEmpty(str)
-  return str ~= nil and str ~= ""
-end
-
-local function IsLink(link)
-  local trimmed_link = Trim(link)
-  if not IsNotEmpty(trimmed_link) then return false end
-  return string.match(trimmed_link, "https?://.+") ~= nil
-end
 
 local Utils = { --Utils
-  Trim = Trim,
+  Trim = function(str)
+    return string.match(str, "^%s*(.-)%s*$") or ""
+  end, --Trim
 
-  IsNotEmpty = IsNotEmpty,
+  IsNotEmpty = function(str)
+    return str ~= nil and str ~= ""
+  end, --IsNotEmpty
 
-  IsLink = IsLink,
+  IsLink = function(self, link)
+    local trimmed_link = self.Trim(link)
+    if not self.IsNotEmpty(trimmed_link) then return false end
+    return string.match(trimmed_link, "https?://.+") ~= nil
+  end, --IsLink
 
   File = { --File
     Exists = function(path)
       local file = io.open(path, "r")
+
       if file then
         local str = file:read("*a")
         io.close(file)
+
         if str and string.match(str, "%S") then
           return true
         end
@@ -80,7 +104,7 @@ local Utils = { --Utils
 
   Calculate = { --Calculate
     Offset = function(screen_size, size, thickness)
-      local base_offset = CONFIG.UI.BASE_OFFSET + math.floor((thickness - 1) / 2) * CONFIG.UI.OFFSET_STEP
+      local base_offset = CONFIG.UI.BASE_OFFSET + math.floor((thickness - 1) / 2) * CONFIG.UI.STEP_OFFSET
       return Vec2(screen_size.y * base_offset, screen_size.y * CONFIG.UI.BASE_Y_OFFSET) + Vec2(size.x, 0)
     end, --Offset
 
@@ -88,6 +112,7 @@ local Utils = { --Utils
       local warning_distance = CONFIG.OPACITY.WARNING_DISTANCE
       local max_distance = CONFIG.OPACITY.MAX_DISTANCE
       local max_alpha = CONFIG.OPACITY.MAX_ALPHA
+
       if distance >= warning_distance then
         return max_alpha
       elseif distance >= max_distance then
@@ -98,19 +123,37 @@ local Utils = { --Utils
         return min_alpha + (warning_alpha - min_alpha) * ratio
       end --if
     end, --Opacity
+
+    ScaleImage = function(self, screen_size, hero, border_thickness, scale_value)
+      local size = Vec2(screen_size.y * CONFIG.UI.BASE_SIZE, screen_size.y * CONFIG.UI.BASE_SIZE)
+      local offset = self.Offset(screen_size, size, border_thickness)
+      local pos = Render.WorldToScreen(Entity.GetAbsOrigin(hero) + Vector(0, 0, NPC.GetHealthBarOffset(hero))) - offset
+      
+      return {
+        size = size + Vec2(scale_value, scale_value),
+        pos = pos - Vec2(scale_value, scale_value)
+      }
+    end, --ScaleImage
+
+    MouseDistance = function(pos, size)
+      local mouse_x, mouse_y = Input.GetCursorPos()
+      local mouse_pos = Vec2(mouse_x, mouse_y)
+      local image_center = pos + size / 2
+
+      return (mouse_pos - image_center):Length()
+    end
   } --Calculate
-} --Utils
+}
+
 
 local Data = { --Data
   SaveConfig = function(data)
     local encode = JSON:encode(data)
     Config.WriteString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY, encode)
-    Log.Write(" [DEBUG] Saving config: " .. encode)
   end, --SaveFile
 
   ReadConfig = function()
     local config_string = Config.ReadString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY)
-    Log.Write(" [DEBUG] Reading config: " .. (config_string or "nil"))
     return config_string
   end, --SaveFile
 
@@ -145,72 +188,36 @@ local Data = { --Data
     if index < 1 or index > #keys then
       return keys
     end --if
+
     local remove_item = keys[index]
     data[remove_item] = nil
     if next(data) == nil then
       data[CONFIG.NONE] = ""
     end --if
+
     self.SaveConfig(data)
     return self.GetKeys(data)
   end, --Add
 
-  Default = function (self, data)
+  DefaultItem = function (self, data)
     for key in pairs(data) do
       data[key] = nil
     end --for
     data[CONFIG.DEFAULT_IMAGE.NAME] = CONFIG.DEFAULT_IMAGE.LINK
+
     self.SaveConfig(data)
     return self.GetKeys(data)
   end --Default
 } --Data
 
+
 local UI = { --UI
-  SetControlsState = function(script_instance, state)
-    local ui = script_instance.ui
-    local controls = {
-      --Images
-      "preset_selector",
-
-      --Images List
-      "custom_name",
-      "custom_link",
-      "add_item",
-      "remove_item",
-      "default_item",
-
-      --Settings
-      "custom_scale",
-      "custom_rounding",
-      --#region Opacity
-      "alpha_selector",
-      "dynamic_opacity_scale",
-      "static_opacity_scale",
-      "warning_opacity_scale",
-      --#region Opacity
-
-      --Border
-      "border_switch",
-      "border_thickness",
-      "border_color",
-    } --controls
-
-    for _, control in pairs(controls) do
+  SetControlsState = function(ui, state)
+    for _, control in pairs(CONFIG.UI.MENU_NAMES) do
       if ui[control] then
         ui[control]:Disabled(not state)
       end --if
     end --for
-
-    if script_instance.add_item then
-      script_instance.add_item:Disabled(not state)
-    end --if
-
-    if script_instance.remove_item then
-      script_instance.remove_item:Disabled(not state)
-    end --if
-    
-    if script_instance.default_item then
-      script_instance.default_item:Disabled(not state)
-    end --if
   end, --SetControlsState
 
   SetBorderState = function(ui, state)
@@ -248,9 +255,40 @@ local UI = { --UI
   end --UpdateOpacityLimits
 } --UI
 
+
+local Rendered = { --Rendered
+  Image = function(ui, image, scaled_image, alpha)
+    Render.Image(
+      image,
+      scaled_image.pos - ui.border_thickness:Get(),
+      scaled_image.size + ui.border_thickness:Get(),
+      Color(255, 255, 255, alpha),
+      ui.custom_rounding:Get()
+    ) --Image
+  end, --Image
+
+  Border = function(ui, scaled_image, alpha)
+    local border_color = ui.border_color:Get()
+
+    Render.Rect(
+      scaled_image.pos - ui.border_thickness:Get(),
+      scaled_image.pos + scaled_image.size,
+      Color(border_color.r, border_color.g, border_color.b, alpha),
+      ui.custom_rounding:Get(),
+      Enum.DrawFlags.None,
+      ui.border_thickness:Get()
+    ) --Rect
+  end, --Border
+
+  FramedImage = function(self, ui, image, scaled_image, alpha)
+    self.Image(ui, image, scaled_image, alpha)
+    if ui.border_switch:Get() then self.Border(ui,scaled_image, alpha) end
+  end, --FramedImage
+} --Rendered
+
+
 local script = {}
 
--- Создание UI
 function script:CreateUI(keys)
   --#region Header
   self.header = Menu.Create("Changer", "Main", "Images Overlay")
@@ -282,7 +320,7 @@ function script:CreateUI(keys)
     --Settings
     border_switch = self.border_settings:Switch("Enable Border", false), 
     border_thickness = self.border_settings:Slider("Border Scale", CONFIG.BORDER.MIN, CONFIG.BORDER.MAX, CONFIG.BORDER.MIN),
-    border_color = self.border_settings:ColorPicker("Border Color", CONFIG.BORDER.DEFAULT_COLOR), 
+    border_color = self.border_settings:ColorPicker("Border Color", CONFIG.BORDER.DEFAULT_COLOR),
   } --ui
 
   local script_ref = self
@@ -301,37 +339,46 @@ function script:CreateUI(keys)
   self:DecorationUI(self.ui, self.header)
 end --CreateUI
 
--- Косметические улучшения UI
 function script:DecorationUI(ui, header)
-  --Icons -- Возможно заменить на более подходящие и упростить код
-  header:Icon("🖌")
-  ui.global_switch:Icon("\u{f00c}")
-  ui.preset_selector:Icon("📋", Vec2(0, -4))
-  ui.alpha_selector:Icon("📋", Vec2(0, -4))
-  ui.custom_name:Icon("𝐓", Vec2(0, -5))
-  ui.custom_link:Icon("🔗", Vec2(0, -5))
-  ui.custom_scale:Icon("\u{f1ce}")
-  ui.custom_rounding:Icon("\u{f1ce}")
-  ui.border_switch:Icon("\u{f00c}")
-  ui.border_thickness:Icon("\u{f1ce}")
-  ui.border_color:Icon("\u{f53f}")
-  ui.dynamic_opacity_scale:Icon("💧", Vec2(0, -4))
-  ui.static_opacity_scale:Icon("💧", Vec2(0, -4))
-  ui.warning_opacity_scale:Icon("💧", Vec2(0, -4))
+  --#region Icons
+  header:Icon(CONFIG.ICONS.HEADER)
 
-  --ToolTips -- Переписать, уже неверные
-  ui.global_switch:ToolTip("❤❤❤")
-  self.add_item:ToolTip("Enter the name and link to the image, then click the button to add it")
-  self.remove_item:ToolTip("Select the desired image from the list, then click the button to delete it")
-  self.default_item:ToolTip("Restores default settings")
-  ui.dynamic_opacity_scale:ToolTip("Maximum transparency in the image area")
-  ui.warning_opacity_scale:ToolTip("Maximum transparency in the area in front of the image")
+  ui.global_switch:Icon(CONFIG.ICONS.SWITCH)
+  ui.border_switch:Icon(CONFIG.ICONS.SWITCH)
+
+  ui.preset_selector:Icon(CONFIG.ICONS.COMBO)
+  ui.alpha_selector:Icon(CONFIG.ICONS.COMBO)
+
+  ui.custom_name:Icon(CONFIG.ICONS.INPUT)
+  ui.custom_link:Icon(CONFIG.ICONS.LINK)
+
+  ui.custom_scale:Icon(CONFIG.ICONS.SCALE)
+  ui.custom_rounding:Icon(CONFIG.ICONS.SCALE)
+  ui.border_thickness:Icon(CONFIG.ICONS.SCALE)
+
+  ui.border_color:Icon(CONFIG.ICONS.COLOR)
+
+  ui.dynamic_opacity_scale:Icon(CONFIG.ICONS.OPACITY)
+  ui.static_opacity_scale:Icon(CONFIG.ICONS.OPACITY)
+  ui.warning_opacity_scale:Icon(CONFIG.ICONS.OPACITY)
+  --#endregion Icons
+
+  --#region ToolTips
+  ui.global_switch:ToolTip(CONFIG.TEXT.TOOLTIP.MAIN)
+
+  self.add_item:ToolTip(CONFIG.TEXT.TOOLTIP.ADD_BUTTON)
+  self.remove_item:ToolTip(CONFIG.TEXT.TOOLTIP.REMOVE_BUTTON)
+  self.default_item:ToolTip(CONFIG.TEXT.TOOLTIP.DEFAULT_BUTTON)
+
+  ui.dynamic_opacity_scale:ToolTip(CONFIG.TEXT.TOOLTIP.OPACITY_BUTTON)
+  ui.warning_opacity_scale:ToolTip(CONFIG.TEXT.TOOLTIP.WARNING_BUTTON)
+  --#endregion ToolTips
 end --DecorationUI
 
 function script:CallbacksUI()
   -- Switch callbacks
   script.ui.global_switch:SetCallback(function ()
-    UI.SetControlsState(script, script.ui.global_switch:Get())
+    UI.SetControlsState(script.ui, script.ui.global_switch:Get())
   end, true)
 
   script.ui.border_switch:SetCallback(function ()
@@ -353,13 +400,11 @@ function script:CallbacksUI()
   UI.UpdateOpacityLimits(script.ui)
 end --CallbacksUI
 
--- Инициализация скрипта
 function script:Initialize()
   -- Data
   self.data = Data:Load()
 
   local keys = Data.GetKeys(self.data)
-  Log.Write(" [DEBUG] Loaded keys: " .. table.concat(keys, ", "))
 
   -- UI
   self:CreateUI(keys)
@@ -368,19 +413,20 @@ function script:Initialize()
   -- Game objects
   self.hero = Heroes.GetLocal()
   self.screen_size = Render.ScreenSize()
-
-  Log.Write(" [DEBUG] Script initialization completed")
 end --Initialize
 
 function script:AddItem()
   local new_link = self.ui.custom_link:Get()
   local new_name = self.ui.custom_name:Get()
 
-  if IsLink(new_link) and IsNotEmpty(new_name) then
+  if Utils:IsLink(new_link) and Utils.IsNotEmpty(new_name) then
     local keys = Data.GetKeys(self.data)
 
     if #keys == 1 and keys[1] == CONFIG.NONE then
       self.data[CONFIG.NONE] = nil
+
+      self.ui.border_switch:Disabled(false)
+      self.ui.preset_selector:Disabled(false)
     end --if
 
     keys = Data:AddItem(self.data, new_name, new_link)
@@ -394,12 +440,13 @@ function script:AddItem()
       end --if
     end --for
 
-    Log.Write(" [+] [Images Overlay]\tИзображение " .. new_name .. " по ссылке " .. new_link .. " добавлено!")
+    self.ui.border_switch:Set(true)
+
+    Log.Write("[Images Overlay]\tИзображение добавлено!")
   end --if
 
   self.ui.custom_name:Set("")
   self.ui.custom_link:Set("")
-  self.ui.border_switch:Set(true)
 end --AddItem
 
 function script:RemoveItem()
@@ -408,20 +455,20 @@ function script:RemoveItem()
 
   if #keys == 1 and keys[1] == CONFIG.NONE then
     self.ui.border_switch:Set(false)
+
+    self.ui.border_switch:Disabled(true)
+    self.ui.preset_selector:Disabled(true)
   end --if
-    
+
   self.ui.preset_selector:Set(0)
   self.ui.preset_selector:Update(keys)
-  --self.ui.preset_selector:Disabled(#keys == 1 and keys[1] == CONFIG.NONE) -- Временно отключено
 
-  --self.ui.border_switch:Disabled(#keys == 1 and keys[1] == CONFIG.NONE) -- Временно отключено
-
-  Log.Write(" [+] [Images Overlay]\tИзображение удалено!")
+  Log.Write("[Images Overlay]\tИзображение удалено!")
 end --RemoveItem
 
 function script:DefaultItem()
-  local keys = Data:Default(self.data)
-  Log.Write("Default keys: " .. table.concat(keys, ", "))
+  local keys = Data:DefaultItem(self.data)
+
   self.ui.preset_selector:Update(keys)
   self.ui.preset_selector:Set(0)
 
@@ -435,32 +482,30 @@ function script:DefaultItem()
   self.ui.dynamic_opacity_scale:Set(CONFIG.OPACITY.MIN_ALPHA)
   self.ui.static_opacity_scale:Set(CONFIG.OPACITY.MAX_ALPHA)
 
-  Log.Write(" [+] [Images Overlay]\tНастройки по умолчанию установлены!")
+  self.ui.border_switch:Disabled(false)
+  self.ui.preset_selector:Disabled(false)
+
+  Log.Write("[Images Overlay]\tНастройки по умолчанию установлены!")
 end --DefaultItem
 
-function script:OnDraw()
-  if not script.hero or not Entity.IsAlive(script.hero) or not script.ui.global_switch:Get() then
-    return script
-  end --if
+function script:CanDraw()
+  return self.hero
+     and Entity.IsAlive(self.hero)
+     and self.ui.global_switch:Get()
+end --CanDraw
 
-  -- Загружаем картинку
+function script:OnScriptsLoaded()
+  script:Initialize()
+end --OnScriptsLoaded
+
+function script:OnDraw()
+  if not script:CanDraw() then return end
+
   local key = script.ui.preset_selector:List()[script.ui.preset_selector:Get() + 1]
   local image = Render.LoadImage(script.data[key])
 
-  local size = Vec2(script.screen_size.y * CONFIG.UI.BASE_SIZE, script.screen_size.y * CONFIG.UI.BASE_SIZE)
-  local offset = Utils.Calculate.Offset(script.screen_size, size, script.ui.border_thickness:Get())
-  local pos = Render.WorldToScreen(Entity.GetAbsOrigin(script.hero) + Vector(0, 0, NPC.GetHealthBarOffset(script.hero))) - offset
-
-  local scale_value = script.ui.custom_scale:Get()
-  local scaled_size = size + Vec2(scale_value, scale_value)
-  local scaled_pos = pos - Vec2(scale_value, scale_value)
-
-  local mouse_x, mouse_y = Input.GetCursorPos()
-  local mouse_pos = Vec2(mouse_x, mouse_y)
-
-  -- Рассчитываем расстояние от мыши до центра картинки
-  local image_center = scaled_pos + scaled_size / 2
-  local distance = (mouse_pos - image_center):Length()
+  local scaled_image = Utils.Calculate:ScaleImage(script.screen_size, script.hero, script.ui.border_thickness:Get(), script.ui.custom_scale:Get())
+  local distance = Utils.Calculate.MouseDistance(scaled_image.pos, scaled_image.size)
 
   local alpha
   if script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1] == "Static" then
@@ -469,28 +514,7 @@ function script:OnDraw()
     alpha = Utils.Calculate.Opacity(distance, script.ui.dynamic_opacity_scale:Get(), script.ui.warning_opacity_scale:Get())
   end --if
 
-  Render.Image(
-      image,
-      scaled_pos - script.ui.border_thickness:Get(),
-      scaled_size + script.ui.border_thickness:Get(),
-      Color(255, 255, 255, alpha),
-      script.ui.custom_rounding:Get()
-    ) --Image
-
-    if script.ui.border_switch:Get() then
-      -- Альфа для бордера
-      local border_color = script.ui.border_color:Get()
-      local transparent_border = Color(border_color.r, border_color.g, border_color.b, alpha)
-      Render.Rect(
-          scaled_pos - script.ui.border_thickness:Get(),
-          scaled_pos + scaled_size,
-          transparent_border,
-          script.ui.custom_rounding:Get(),
-          Enum.DrawFlags.None,
-          script.ui.border_thickness:Get()
-        ) --Rect
-    end --if
+  Rendered:FramedImage(script.ui, image, scaled_image, alpha)
 end --OnDraw
 
-script:Initialize()
 return script
