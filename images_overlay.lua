@@ -2,7 +2,7 @@
   Images Overlay
   Created by Juimun ❤❤❤
   GitHub: https://github.com/Juimun/uc-dota2-scripts
-  Version: 2.2.1
+  Version: 2.3
   Description: Показывает на экране выбранное изображение из списка
 ]]--
 
@@ -10,6 +10,7 @@ local CONFIG = { --CONGIFS
   FILE_NAME = "images_overlay",
   NONE = "None",
   MAIN_CONFIG_KEY = "data",
+  PRESETS_CONFIG_KEY = "presets_data",
   MAIN_PATH = Engine.GetCheatDirectory() .. "configs\\images_overlay.ini",
   DEFAULT_IMAGE = { --DEFAULT_IMAGE
     NAME = "Umbrella",
@@ -41,14 +42,27 @@ local CONFIG = { --CONGIFS
     BASE_OFFSET = 0.053,
     BASE_Y_OFFSET = 0.045,
     BASE_SIZE = 0.033,
-    MENU_NAMES = {
+    MENU_NAMES = { --MENU_NAMES
       "preset_selector", "custom_name", "custom_link",
       "add_item", "remove_item", "default_item", "custom_scale",
       "custom_rounding", "alpha_selector", "dynamic_opacity_scale",
       "static_opacity_scale", "warning_opacity_scale", "border_switch",
-      "border_thickness", "border_color",
-    },
+      "border_thickness", "border_color", "add_preset", "preset_name",
+      "preset_list", "delete_preset", "use_preset", "update_preset",
+    }, --MENU_NAMES
   }, --UI
+  PRESET_MAPPING = {
+    selected_image_key = "selected_image_key",
+    custom_scale = "custom_scale",
+    custom_rounding = "custom_rounding",
+    alpha_selector = "alpha_selector",
+    dynamic_opacity_scale = "dynamic_opacity_scale",
+    static_opacity_scale = "static_opacity_scale",
+    warning_opacity_scale = "warning_opacity_scale",
+    border_switch = "border_switch",
+    border_thickness = "border_thickness",
+    border_color = "border_color",
+  },
   ICONS = {
     HEADER = "\u{1F58C}",
     SWITCH = "\u{f00c}",
@@ -62,11 +76,15 @@ local CONFIG = { --CONGIFS
   TEXT = { --TEXT
     TOOLTIP = { --TOOLTIP
       MAIN = "❤❤❤",
-      ADD_BUTTON = "Enter the name and link to the image, then click the button to add it",
-      REMOVE_BUTTON = "Select the desired image from the list, then click the button to delete it",
-      DEFAULT_BUTTON = "Restores default settings",
+      ADD_BUTTON = "Add new image link to the list",
+      REMOVE_BUTTON = "Remove selected image from the list",
+      DEFAULT_BUTTON = "Load demo preset with default settings",
       OPACITY_SCALE = "Maximum transparency in the image area",
-      WARNING_SCALE = "Maximum transparency in the area in front of the image"
+      WARNING_SCALE = "Maximum transparency in the area in front of the image",
+      ADD_PRESET_BUTTON = "Save current settings as new preset",
+      DELETE_PRESET_BUTTON = "Delete selected preset from the list",
+      USE_PRESET_BUTTON = "Apply selected preset settings",
+      UPDATE_PRESET_BUTTON = "Update selected preset with current settings",
     } --TOOLTIP
   } --TEXT
 } --CONGIFS
@@ -89,6 +107,23 @@ local Utils = { --Utils
     if not self.IsNotEmpty(trimmed_link) then return false end
     return string.match(trimmed_link, "https?://.+") ~= nil
   end, --IsLink
+
+  ApplySettings = function(ui, settings, mapping)
+    for ui_key, setting_key in pairs(mapping) do
+      if settings[setting_key] ~= nil and ui[ui_key] then
+        if setting_key == "border_color" then
+          local color = settings[setting_key]
+          ui[ui_key]:Set(Color(color.r, color.g, color.b, color.a))
+        else
+          ui[ui_key]:Set(settings[setting_key])
+        end
+      end
+    end
+  end, --ApplySettings
+
+  IsEmptyTable = function(preset_index, preset_list)
+    return preset_index < 0 or preset_index >= #preset_list or preset_list[preset_index + 1] == CONFIG.NONE
+  end, --IsEmptyTable
 
   File = { --File
     Exists = function(path)
@@ -154,12 +189,12 @@ local Data = { --Data
   SaveConfig = function(data)
     local encode = JSON:encode(data)
     Config.WriteString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY, encode)
-  end, --SaveFile
+  end, --SaveConfig
 
   ReadConfig = function()
     local config_string = Config.ReadString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY)
-    return config_string
-  end, --SaveFile
+    return Utils.IsNotEmpty(config_string) and JSON:decode(config_string) or {[CONFIG.NONE] = ""}
+  end, --ReadConfig
 
   Load = function(self)
     if not Utils.File.Exists(CONFIG.MAIN_PATH) then
@@ -167,8 +202,7 @@ local Data = { --Data
       self.SaveConfig(default_data)
       return default_data
     else
-      local decode_data = self.ReadConfig()
-      return Utils.IsNotEmpty(decode_data) and JSON:decode(decode_data) or {[CONFIG.NONE] = ""}
+      return self.ReadConfig()
     end --if
   end, --Load 
 
@@ -203,15 +237,58 @@ local Data = { --Data
     return self.GetKeys(data)
   end, --Add
 
-  DefaultItem = function (self, data)
+  DefaultItem = function (self, data, image_name, image_link)
     for key in pairs(data) do
       data[key] = nil
     end --for
-    data[CONFIG.DEFAULT_IMAGE.NAME] = CONFIG.DEFAULT_IMAGE.LINK
+    data[image_name] = image_link
 
     self.SaveConfig(data)
     return self.GetKeys(data)
-  end --Default
+  end, --DefaultItem
+
+  Preset = { --Preset
+    SavePresetsConfig = function(presets_data)
+      local encode = JSON:encode(presets_data)
+      Config.WriteString(CONFIG.FILE_NAME, CONFIG.PRESETS_CONFIG_KEY, encode)
+    end, --SavePresetsConfig
+
+    ReadPresetsConfig = function()
+      local config_string = Config.ReadString(CONFIG.FILE_NAME, CONFIG.PRESETS_CONFIG_KEY)
+      return Utils.IsNotEmpty(config_string) and JSON:decode(config_string) or {}
+    end, --ReadPresetsConfig
+
+    LoadPresets = function(self)
+      local presets_data = self.ReadPresetsConfig()
+      local presets = {}
+
+      for name in pairs(presets_data) do
+        table.insert(presets, name)
+      end --for
+
+      if #presets == 0 then return {CONFIG.NONE} end
+
+      table.sort(presets)
+      return presets
+    end, --LoadPresets
+
+    Save = function(self, preset_name, settings)
+      local presets_data = self.ReadPresetsConfig()
+      presets_data[preset_name] = settings
+      self.SavePresetsConfig(presets_data)
+    end, --Save
+
+    Load = function(self, preset_name)
+      local presets_data = self.ReadPresetsConfig()
+      return presets_data[preset_name] or {}
+    end, --Load
+
+    Delete = function(self, preset_name)
+      local presets_data = self.ReadPresetsConfig()
+      presets_data[preset_name] = nil
+      self.SavePresetsConfig(presets_data)
+    end --Delete
+  } --Preset
 } --Data
 
 
@@ -256,7 +333,31 @@ local UI = { --UI
         ui.dynamic_opacity_scale:Update(CONFIG.OPACITY.MIN_ALPHA, new_max, current_value)
       end --if
     end --if
-  end --UpdateOpacityLimits
+  end, --UpdateOpacityLimits
+
+  SelectedSettings = function(ui)
+    return { --settings
+    global_switch = ui.global_switch:Get(),
+    selected_image_key = ui.preset_selector:List()[ui.preset_selector:Get() + 1],
+
+    custom_scale = ui.custom_scale:Get(),
+    custom_rounding = ui.custom_rounding:Get(),
+
+    alpha_selector = ui.alpha_selector:Get(),
+    dynamic_opacity_scale = ui.dynamic_opacity_scale:Get(),
+    static_opacity_scale = ui.static_opacity_scale:Get(),
+    warning_opacity_scale = ui.warning_opacity_scale:Get(),
+
+    border_switch = ui.border_switch:Get(),
+    border_thickness = ui.border_thickness:Get(),
+    border_color = {
+      r = ui.border_color:Get().r,
+      g = ui.border_color:Get().g,
+      b = ui.border_color:Get().b,
+      a = ui.border_color:Get().a
+    },
+  } --settings
+  end --SelectedSettings
 } --UI
 
 
@@ -293,43 +394,67 @@ local Rendered = { --Rendered
 
 local script = {}
 
-function script:CreateUI(keys)
+function script:CreateUI(keys, presets)
   --#region Header
   self.header = Menu.Create("Changer", "Main", "Images Overlay")
-  self.main = self.header:Create("Main"):Create("Images")
-  self.image_settings = self.header:Create("Main"):Create("Image Settings")
-  self.list_settings = self.header:Create("Main"):Create("List Images Settings")
-  self.border_settings = self.header:Create("Main"):Create("Border Settings")
+
+  local main_page = self.header:Create("Main")
+  local settings_page = self.header:Create("Settings")
+  local preset_page = self.header:Create("Presets")
   --#endregion Header
+
+  --Main
+  local main = main_page:Create("Images", 3)
+  local list_settings = main_page:Create("List Images Settings", 3)
+
+  --Settings
+  local image_settings = settings_page:Create("Image Settings", 3)
+  local opacity_settings = settings_page:Create("Opacity Settings")
+  local border_settings = settings_page:Create("Border Settings")
+
+  -- Presets
+  local demo_preset = preset_page:Create("Demo", 3)
+  local main_preset = preset_page:Create("Presets")
+  local preset_settings = preset_page:Create("Presets Settings")
 
   self.ui = { --ui
     --Images
-    global_switch = self.main:Switch("Enable", false),
-    preset_selector = self.main:Combo("List Images", keys),
+    global_switch = main:Switch("Enable", false),
+    preset_selector = main:Combo("List Images", keys),
 
     --Image List
-    custom_name = self.list_settings:Input("Image name", ""),
-    custom_link = self.list_settings:Input("Custom link", ""),
+    custom_name = list_settings:Input("Image name", ""),
+    custom_link = list_settings:Input("Custom link", ""),
 
-    --Settings
-    custom_scale = self.image_settings:Slider("Image Scale", CONFIG.SCALE.MIN, CONFIG.SCALE.MAX, CONFIG.SCALE.MIN),
-    custom_rounding = self.image_settings:Slider("Rounding Scale", CONFIG.SCALE.MIN, CONFIG.SCALE.MAX, CONFIG.SCALE.MIN),
-    --#region Opacity
-    alpha_selector = self.image_settings:Combo("Opacity Mode", {CONFIG.OPACITY.MODE.STATIC, CONFIG.OPACITY.MODE.DYNAMIC}),
-    dynamic_opacity_scale = self.image_settings:Slider("Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.DYNAMIC_ALPHA, CONFIG.OPACITY.MIN_ALPHA),
-    static_opacity_scale = self.image_settings:Slider("Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.MAX_ALPHA, CONFIG.OPACITY.MAX_ALPHA),
-    warning_opacity_scale = self.image_settings:Slider("Warning Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.MAX_ALPHA, CONFIG.OPACITY.MAX_ALPHA),
-    --#endregion Opacity
+    --#region Settings
+    --Image
+    custom_scale = image_settings:Slider("Image Scale", CONFIG.SCALE.MIN, CONFIG.SCALE.MAX, CONFIG.SCALE.MIN),
+    custom_rounding = image_settings:Slider("Rounding Scale", CONFIG.SCALE.MIN, CONFIG.SCALE.MAX, CONFIG.SCALE.MIN),
 
-    --Settings
-    border_switch = self.border_settings:Switch("Enable Border", false),
-    border_thickness = self.border_settings:Slider("Border Scale", CONFIG.BORDER.MIN, CONFIG.BORDER.MAX, CONFIG.BORDER.MIN),
-    border_color = self.border_settings:ColorPicker("Border Color", CONFIG.BORDER.DEFAULT_COLOR),
+    --Border
+    border_switch = border_settings:Switch("Enable Border", false),
+    border_thickness = border_settings:Slider("Border Thickness", CONFIG.BORDER.MIN, CONFIG.BORDER.MAX, CONFIG.BORDER.MIN),
+    border_color = border_settings:ColorPicker("Border Color", CONFIG.BORDER.DEFAULT_COLOR),
+
+    --Opacity
+    alpha_selector = opacity_settings:Combo("Opacity Mode", {CONFIG.OPACITY.MODE.STATIC, CONFIG.OPACITY.MODE.DYNAMIC}),
+    dynamic_opacity_scale = opacity_settings:Slider("Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.DYNAMIC_ALPHA, CONFIG.OPACITY.MIN_ALPHA),
+    static_opacity_scale = opacity_settings:Slider("Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.MAX_ALPHA, CONFIG.OPACITY.MAX_ALPHA),
+    warning_opacity_scale = opacity_settings:Slider("Warning Opacity Scale", CONFIG.OPACITY.MIN_ALPHA, CONFIG.OPACITY.MAX_ALPHA, CONFIG.OPACITY.MAX_ALPHA),
+    --#endregion Settings
+
+    --Presets
+    preset_list = main_preset:Combo("Preset List", presets),
+    preset_name = preset_settings:Input("Preset name", ""),
 
     -- Buttons
-    add_item = self.list_settings:Button("Add link to List Images", function() self:AddItem() end),
-    remove_item = self.list_settings:Button("Remove link to List Images", function() self:RemoveItem() end),
-    default_item = self.list_settings:Button("Default List Images", function() self:DefaultItem() end),
+    add_item = list_settings:Button("Add link", function() self:AddItem() end),
+    remove_item = list_settings:Button("Remove link", function() self:RemoveItem() end),
+    use_preset = main_preset:Button("Use Preset", function() self:UsePreset() end),
+    update_preset = main_preset:Button("Update Preset", function() self:UpdatePreset() end),
+    delete_preset = main_preset:Button("Delete Preset", function() self:DeletePreset() end),
+    default_item = demo_preset:Button("Demo Preset", function() self:DefaultPreset() end),
+    add_preset = preset_settings:Button("Save Preset", function() self:AddPreset() end),
   } --ui
 
   self:DecorationUI(self.ui, self.header)
@@ -344,7 +469,9 @@ function script:DecorationUI(ui, header)
 
   ui.preset_selector:Icon(CONFIG.ICONS.COMBO)
   ui.alpha_selector:Icon(CONFIG.ICONS.COMBO)
+  ui.preset_list:Icon(CONFIG.ICONS.COMBO)
 
+  ui.preset_name:Icon(CONFIG.ICONS.INPUT)
   ui.custom_name:Icon(CONFIG.ICONS.INPUT)
   ui.custom_link:Icon(CONFIG.ICONS.LINK)
 
@@ -365,6 +492,10 @@ function script:DecorationUI(ui, header)
   ui.add_item:ToolTip(CONFIG.TEXT.TOOLTIP.ADD_BUTTON)
   ui.remove_item:ToolTip(CONFIG.TEXT.TOOLTIP.REMOVE_BUTTON)
   ui.default_item:ToolTip(CONFIG.TEXT.TOOLTIP.DEFAULT_BUTTON)
+  ui.delete_preset:ToolTip(CONFIG.TEXT.TOOLTIP.DELETE_PRESET_BUTTON)
+  ui.use_preset:ToolTip(CONFIG.TEXT.TOOLTIP.USE_PRESET_BUTTON)
+  ui.add_preset:ToolTip(CONFIG.TEXT.TOOLTIP.ADD_PRESET_BUTTON)
+  ui.update_preset:ToolTip(CONFIG.TEXT.TOOLTIP.UPDATE_PRESET_BUTTON)
 
   ui.dynamic_opacity_scale:ToolTip(CONFIG.TEXT.TOOLTIP.OPACITY_BUTTON)
   ui.warning_opacity_scale:ToolTip(CONFIG.TEXT.TOOLTIP.WARNING_BUTTON)
@@ -401,9 +532,10 @@ function script:Initialize()
   self.data = Data:Load()
 
   local keys = Data.GetKeys(self.data)
+  local presets = Data.Preset:LoadPresets()
 
   -- UI
-  self:CreateUI(keys)
+  self:CreateUI(keys, presets)
   self:CallbacksUI()
 
   -- Game objects
@@ -416,22 +548,12 @@ function script:AddItem()
   local new_name = self.ui.custom_name:Get()
 
   if Utils:IsLink(new_link) and Utils.IsNotEmpty(new_name) then
-    local keys = Data.GetKeys(self.data)
+    self:RemoveEntry()
 
-    if #keys == 1 and keys[1] == CONFIG.NONE then
-      self.data[CONFIG.NONE] = nil
-    end --if
-
-    keys = Data:AddItem(self.data, new_name, new_link)
+    local keys = Data:AddItem(self.data, new_name, new_link)
     self.ui.preset_selector:Update(keys)
 
-    -- Вроде пишу фигню, но работает
-    for i, key in ipairs(keys) do
-      if key == new_name then
-        self.ui.preset_selector:Set(i - 1)
-        break
-      end --if
-    end --for
+    self:SelectItemByName(keys, new_name)
 
     self.ui.border_switch:Set(true)
 
@@ -442,13 +564,35 @@ function script:AddItem()
   self.ui.custom_link:Set("")
 end --AddItem
 
+function script:RemoveEntry()
+  local keys = Data.GetKeys(self.data)
+  if #keys == 1 and keys[1] == CONFIG.NONE then
+      self.data[CONFIG.NONE] = nil
+  end --if
+end --RemoveEntry
+
+function script:SelectItemByName(keys, selected_name)
+  for i, key in ipairs(keys) do
+    if key == selected_name then
+      self.ui.preset_selector:Set(i - 1)
+      break
+    end --if
+  end --for
+end --SelectItemByName
+
 function script:RemoveItem()
   local index = self.ui.preset_selector:Get() + 1
-  local keys = Data:RemoveItem(self.data, index)
+  local keys = Data.GetKeys(self.data)
+  local removed_key = keys[index]
+  if not self:IsValidItemToRemove(removed_key) then return end
+
+  self:RemoveDependentPresets(removed_key)
+
+  keys = Data:RemoveItem(self.data, index)
 
   if #keys == 1 and keys[1] == CONFIG.NONE then
     self.ui.border_switch:Set(false)
-  end --if
+  end
 
   self.ui.preset_selector:Set(0)
   self.ui.preset_selector:Update(keys)
@@ -456,27 +600,126 @@ function script:RemoveItem()
   Log.Write("[Images Overlay]\tИзображение удалено!")
 end --RemoveItem
 
-function script:DefaultItem()
-  local keys = Data:DefaultItem(self.data)
+function script:IsValidItemToRemove(key)
+  return key and key ~= CONFIG.NONE
+end --IsValidItemToRemove
 
+function script:RemoveDependentPresets(removed_key)
+  local presets_data = Data.Preset:ReadPresetsConfig()
+  local delete_presets = {}
+
+  for name, settings in pairs(presets_data) do
+    if settings.selected_image_key == removed_key then
+      table.insert(delete_presets, name)
+    end --if
+  end --for
+
+  for _, name in ipairs(delete_presets) do Data.Preset:Delete(name) end
+
+  if #delete_presets > 0 then
+    local updated_presets = Data.Preset:LoadPresets()
+    self.ui.preset_list:Update(updated_presets)
+    self.ui.preset_list:Set(0)
+  end --if
+end --RemoveDependentPresets
+
+function script:DefaultPreset()
+  local keys = Data:DefaultItem(self.data, CONFIG.DEFAULT_IMAGE.NAME, CONFIG.DEFAULT_IMAGE.LINK)
+
+  -- Выставляем пресет
   self.ui.preset_selector:Update(keys)
   self.ui.preset_selector:Set(0)
 
-  -- Сброс настроек UI
   self.ui.custom_scale:Set(0)
-  self.ui.custom_rounding:Set(0)
-  self.ui.border_thickness:Set(0)
+  self.ui.custom_rounding:Set(25)
+
   self.ui.border_switch:Set(true)
+  self.ui.border_thickness:Set(2)
   self.ui.border_color:Set(CONFIG.BORDER.DEFAULT_COLOR)
+
   self.ui.warning_opacity_scale:Set(CONFIG.OPACITY.MAX_ALPHA)
   self.ui.dynamic_opacity_scale:Set(CONFIG.OPACITY.MIN_ALPHA)
   self.ui.static_opacity_scale:Set(CONFIG.OPACITY.MAX_ALPHA)
 
-  self.ui.border_switch:Disabled(false)
-  self.ui.preset_selector:Disabled(false)
+  Log.Write("[Images Overlay]\tДемонстрационный пресет установлен!")
+end --DefaultPreset
 
-  Log.Write("[Images Overlay]\tНастройки по умолчанию установлены!")
-end --DefaultItem
+function script:AddPreset()
+  local preset_name = self.ui.preset_name:Get()
+  if not Utils.IsNotEmpty(preset_name) then return end
+
+  local settings = UI.SelectedSettings(self.ui)
+  Data.Preset:Save(preset_name, settings)
+
+  local preset_list = self.ui.preset_list:List()
+  if #preset_list == 1 and preset_list[1] == CONFIG.NONE then preset_list[1] = nil end
+  table.insert(preset_list, preset_name)
+
+  self.ui.preset_list:Update(preset_list)
+  self.ui.preset_name:Set("")
+
+  Log.Write("[Images Overlay]\tПресед сохранен!")
+end --AddPreset
+
+function script:DeletePreset()
+  local preset_index = self.ui.preset_list:Get()
+  local preset_list = self.ui.preset_list:List()
+  if Utils.IsEmptyTable(preset_index, preset_list) then return end
+
+  local preset_name = preset_list[preset_index + 1]
+  Data.Preset:Delete(preset_name)
+
+  local updated_presets = Data.Preset:LoadPresets()
+  self.ui.preset_list:Update(updated_presets)
+  self.ui.preset_list:Set(0)
+
+  Log.Write("[Images Overlay]\tПресет удален!")
+end --DeletePreset
+
+function script:UsePreset()
+  local preset_index = self.ui.preset_list:Get()
+  local preset_list = self.ui.preset_list:List()
+  if Utils.IsEmptyTable(preset_index, preset_list) then return end
+
+  local preset_name = preset_list[preset_index + 1]
+  local settings = Data.Preset:Load(preset_name)
+  if not settings or next(settings) == nil then return end
+
+  Utils.ApplySettings(self.ui, settings, CONFIG.PRESET_MAPPING)
+  self:UseSelectedPresetImageKey(settings.selected_image_key)
+
+  UI.SetControlsState(self.ui, self.ui.global_switch:Get())
+  UI.SetBorderState(self.ui, self.ui.border_switch:Get() and self.ui.global_switch:Get())
+  UI.SetOpacityState(self.ui, self.ui.alpha_selector:List()[self.ui.alpha_selector:Get() + 1])
+  UI.UpdateOpacityLimits(self.ui)
+
+  Log.Write("[Images Overlay]\tПресет применен!")
+end --UsePreset
+
+function script:UpdatePreset()
+  local preset_index = self.ui.preset_list:Get()
+  local preset_list = self.ui.preset_list:List()
+  if Utils.IsEmptyTable(preset_index, preset_list) then return end
+
+  local preset_name = preset_list[preset_index + 1]
+  local current_settings = UI.SelectedSettings(self.ui)
+
+  Data.Preset:Save(preset_name, current_settings)
+
+  Log.Write("[Images Overlay]\tПресет обновлен!")
+end --UpdatePreset
+
+function script:UseSelectedPresetImageKey(selected_key)
+  if selected_key then
+    local keys = self.ui.preset_selector:List()
+    for i, key in ipairs(keys) do
+      if key == selected_key then
+        self.ui.preset_selector:Set(i - 1)
+        break
+      end --if
+    end --for
+  end --if
+end --UseSelectedPresetImageKey
 
 function script:CanDraw()
   return self.hero
