@@ -2,8 +2,8 @@
   Images Overlay
   Created by Juimun ❤❤❤
   GitHub: https://github.com/Juimun/uc-dota2-scripts
-  Version: 2.3
-  Description: Показывает на экране выбранное изображение из списка
+  Version: 2.3.1
+  Description: Рендерит над портретом героя выбранное изображение по ссылке
 ]]--
 
 local CONFIG = { --CONGIFS
@@ -11,7 +11,6 @@ local CONFIG = { --CONGIFS
   NONE = "None",
   MAIN_CONFIG_KEY = "data",
   PRESETS_CONFIG_KEY = "presets_data",
-  MAIN_PATH = Engine.GetCheatDirectory() .. "configs\\images_overlay.ini",
   DEFAULT_IMAGE = { --DEFAULT_IMAGE
     NAME = "Umbrella",
     LINK = "https://i.imgur.com/mrygCXZ.gif",
@@ -51,7 +50,7 @@ local CONFIG = { --CONGIFS
       "preset_list", "delete_preset", "use_preset", "update_preset",
     }, --MENU_NAMES
   }, --UI
-  PRESET_MAPPING = {
+  PRESET_MAPPING = { --PRESET_MAPPING
     selected_image_key = "selected_image_key",
     custom_scale = "custom_scale",
     custom_rounding = "custom_rounding",
@@ -62,8 +61,8 @@ local CONFIG = { --CONGIFS
     border_switch = "border_switch",
     border_thickness = "border_thickness",
     border_color = "border_color",
-  },
-  ICONS = {
+  }, --PRESET_MAPPING
+  ICONS = { --ICONS
     HEADER = "\u{1F58C}",
     SWITCH = "\u{f00c}",
     COMBO = "\u{1F4CB}",
@@ -125,22 +124,6 @@ local Utils = { --Utils
     return preset_index < 0 or preset_index >= #preset_list or preset_list[preset_index + 1] == CONFIG.NONE
   end, --IsEmptyTable
 
-  File = { --File
-    Exists = function(path)
-      local file = io.open(path, "r")
-
-      if file then
-        local str = file:read("*a")
-        io.close(file)
-
-        if str and string.match(str, "%S") then
-          return true
-        end
-      end
-      return false
-    end --Exists
-  }, --File
-
   Calculate = { --Calculate
     Offset = function(screen_size, size, thickness)
       local base_offset = CONFIG.UI.BASE_OFFSET + math.floor((thickness - 1) / 2) * CONFIG.UI.STEP_OFFSET
@@ -180,31 +163,72 @@ local Utils = { --Utils
       local image_center = pos + size / 2
 
       return (mouse_pos - image_center):Length()
-    end
+    end --MouseDistance
   } --Calculate
-}
+} --Utils
 
 
 local Data = { --Data
+  ConfigExists = function()
+    local success, config_string = pcall(function()
+      return Config.ReadString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY)
+    end) --pcall
+
+    if success and Utils.IsNotEmpty(config_string) then return true end
+    return false
+  end, --ConfigExists
+
   SaveConfig = function(data)
-    local encode = JSON:encode(data)
-    Config.WriteString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY, encode)
+    if not data or type(data) ~= "table" then return false end
+
+    local success, encode = pcall(function()
+      return JSON:encode(data)
+    end) --pcall
+    if not success or not encode then return false end
+
+    local write_success = pcall(function()
+      Config.WriteString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY, encode)
+    end) --pcall
+
+    return write_success
   end, --SaveConfig
 
   ReadConfig = function()
-    local config_string = Config.ReadString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY)
-    return Utils.IsNotEmpty(config_string) and JSON:decode(config_string) or {[CONFIG.NONE] = ""}
+    local success, config_string = pcall(function()
+      return Config.ReadString(CONFIG.FILE_NAME, CONFIG.MAIN_CONFIG_KEY)
+    end) --pcall
+
+    if not success or not config_string or config_string == "" then
+      return {[CONFIG.NONE] = ""}
+    end --if
+
+    local decode_success, decoded_data = pcall(function()
+      return JSON:decode(config_string)
+    end) --pcall
+    if decode_success and decoded_data then
+      return decoded_data
+    else
+      return {[CONFIG.NONE] = ""}
+    end --if
   end, --ReadConfig
 
   Load = function(self)
-    if not Utils.File.Exists(CONFIG.MAIN_PATH) then
+    if not self.ConfigExists() then
       local default_data = {[CONFIG.DEFAULT_IMAGE.NAME] = CONFIG.DEFAULT_IMAGE.LINK}
+
       self.SaveConfig(default_data)
       return default_data
     else
-      return self.ReadConfig()
+      local loaded_data = self.ReadConfig()
+      if not loaded_data or next(loaded_data) == nil or loaded_data[CONFIG.NONE] then
+        local default_data = {[CONFIG.DEFAULT_IMAGE.NAME] = CONFIG.DEFAULT_IMAGE.LINK}
+        self.SaveConfig(default_data)
+        return default_data
+      end --if
+
+      return loaded_data
     end --if
-  end, --Load 
+  end, --Load
 
   GetKeys = function(data)
     local keys = {}
@@ -215,47 +239,73 @@ local Data = { --Data
     return keys
   end, --GetKeys
 
-  AddItem = function (self, data, name, link)
+  AddItem = function(self, data, name, link)
+    if not Utils.IsNotEmpty(name) or not Utils:IsLink(link) then
+      return self.GetKeys(data)
+    end --if
+
+    if data[CONFIG.NONE] then data[CONFIG.NONE] = nil end
     data[name] = link
+
     self.SaveConfig(data)
     return self.GetKeys(data)
-  end, --Add
+  end,
 
-  RemoveItem = function (self, data, index)
+  RemoveItem = function(self, data, index)
     local keys = self.GetKeys(data)
-    if index < 1 or index > #keys then
-      return keys
-    end --if
+    if index < 1 or index > #keys then return keys end
 
     local remove_item = keys[index]
-    data[remove_item] = nil
-    if next(data) == nil then
-      data[CONFIG.NONE] = ""
-    end --if
+    if remove_item == CONFIG.NONE then return keys end
+
+    data[remove_item] = nil 
+    if next(data) == nil then data[CONFIG.NONE] = "" end
 
     self.SaveConfig(data)
     return self.GetKeys(data)
-  end, --Add
+  end,
 
-  DefaultItem = function (self, data, image_name, image_link)
-    for key in pairs(data) do
-      data[key] = nil
-    end --for
+  DefaultItem = function(self, data, image_name, image_link)
+    for key in pairs(data) do data[key] = nil end
     data[image_name] = image_link
 
     self.SaveConfig(data)
     return self.GetKeys(data)
-  end, --DefaultItem
+  end,
 
   Preset = { --Preset
-    SavePresetsConfig = function(presets_data)
-      local encode = JSON:encode(presets_data)
-      Config.WriteString(CONFIG.FILE_NAME, CONFIG.PRESETS_CONFIG_KEY, encode)
+    SavePresetsConfig = function(data)
+      if not data or type(data) ~= "table" then return false end
+
+      local success, encode = pcall(function()
+        return JSON:encode(data)
+      end) --pcall
+      if not success or not encode then return false end
+
+      local write_success = pcall(function()
+        Config.WriteString(CONFIG.FILE_NAME, CONFIG.PRESETS_CONFIG_KEY, encode)
+      end) --pcall
+
+      return write_success
     end, --SavePresetsConfig
 
     ReadPresetsConfig = function()
-      local config_string = Config.ReadString(CONFIG.FILE_NAME, CONFIG.PRESETS_CONFIG_KEY)
-      return Utils.IsNotEmpty(config_string) and JSON:decode(config_string) or {}
+      local success, config_string = pcall(function()
+        return Config.ReadString(CONFIG.FILE_NAME, CONFIG.PRESETS_CONFIG_KEY)
+      end) --pcall
+
+      if not success or not config_string or config_string == "" then
+        return {CONFIG.NONE}
+      end --if
+
+      local decode_success, decoded_data = pcall(function()
+        return JSON:decode(config_string)
+      end) --pcall
+      if decode_success and decoded_data then
+        return decoded_data
+      else
+        return {CONFIG.NONE}
+      end --if
     end, --ReadPresetsConfig
 
     LoadPresets = function(self)
@@ -520,7 +570,6 @@ function script:CallbacksUI()
     UI.UpdateOpacityLimits(script.ui)
   end, true)
 
-  -- Инициализация состояний
   UI.SetControlsState(script.ui, script.ui.global_switch:Get())
   UI.SetBorderState(script.ui, script.ui.border_switch:Get() and script.ui.global_switch:Get())
   UI.SetOpacityState(script.ui, script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1])
@@ -528,17 +577,14 @@ function script:CallbacksUI()
 end --CallbacksUI
 
 function script:Initialize()
-  -- Data
   self.data = Data:Load()
 
   local keys = Data.GetKeys(self.data)
   local presets = Data.Preset:LoadPresets()
 
-  -- UI
   self:CreateUI(keys, presets)
   self:CallbacksUI()
 
-  -- Game objects
   self.hero = Heroes.GetLocal()
   self.screen_size = Render.ScreenSize()
 end --Initialize
@@ -557,7 +603,7 @@ function script:AddItem()
 
     self.ui.border_switch:Set(true)
 
-    Log.Write("[Images Overlay]\tИзображение добавлено!")
+    Log.Write("[Images Overlay] [ ✓ ]\tИзображение добавлено!")
   end --if
 
   self.ui.custom_name:Set("")
@@ -597,7 +643,7 @@ function script:RemoveItem()
   self.ui.preset_selector:Set(0)
   self.ui.preset_selector:Update(keys)
 
-  Log.Write("[Images Overlay]\tИзображение удалено!")
+  Log.Write("[Images Overlay] [ ✓ ]\tИзображение удалено!")
 end --RemoveItem
 
 function script:IsValidItemToRemove(key)
@@ -626,6 +672,8 @@ end --RemoveDependentPresets
 function script:DefaultPreset()
   local keys = Data:DefaultItem(self.data, CONFIG.DEFAULT_IMAGE.NAME, CONFIG.DEFAULT_IMAGE.LINK)
 
+  self:DeleteAllPresets()
+
   -- Выставляем пресет
   self.ui.preset_selector:Update(keys)
   self.ui.preset_selector:Set(0)
@@ -641,7 +689,7 @@ function script:DefaultPreset()
   self.ui.dynamic_opacity_scale:Set(CONFIG.OPACITY.MIN_ALPHA)
   self.ui.static_opacity_scale:Set(CONFIG.OPACITY.MAX_ALPHA)
 
-  Log.Write("[Images Overlay]\tДемонстрационный пресет установлен!")
+  Log.Write("[Images Overlay] [ ✓ ]\tДемонстрационный пресет установлен!")
 end --DefaultPreset
 
 function script:AddPreset()
@@ -658,7 +706,7 @@ function script:AddPreset()
   self.ui.preset_list:Update(preset_list)
   self.ui.preset_name:Set("")
 
-  Log.Write("[Images Overlay]\tПресед сохранен!")
+  Log.Write("[Images Overlay] [ ✓ ]\tПресед сохранен!")
 end --AddPreset
 
 function script:DeletePreset()
@@ -673,8 +721,21 @@ function script:DeletePreset()
   self.ui.preset_list:Update(updated_presets)
   self.ui.preset_list:Set(0)
 
-  Log.Write("[Images Overlay]\tПресет удален!")
+  Log.Write("[Images Overlay] [ ✓ ]\tПресет удален!")
 end --DeletePreset
+
+function script:DeleteAllPresets()
+  local presets_data = Data.Preset:ReadPresetsConfig()
+
+  if next(presets_data) ~= nil then
+    for preset_name in pairs(presets_data) do
+      Data.Preset:Delete(preset_name)
+    end --for
+  end --if
+
+  self.ui.preset_list:Update({CONFIG.NONE})
+  self.ui.preset_list:Set(0)
+end --DeleteAllPresets
 
 function script:UsePreset()
   local preset_index = self.ui.preset_list:Get()
@@ -693,7 +754,7 @@ function script:UsePreset()
   UI.SetOpacityState(self.ui, self.ui.alpha_selector:List()[self.ui.alpha_selector:Get() + 1])
   UI.UpdateOpacityLimits(self.ui)
 
-  Log.Write("[Images Overlay]\tПресет применен!")
+  Log.Write("[Images Overlay] [ ✓ ]\tПресет применен!")
 end --UsePreset
 
 function script:UpdatePreset()
@@ -706,7 +767,7 @@ function script:UpdatePreset()
 
   Data.Preset:Save(preset_name, current_settings)
 
-  Log.Write("[Images Overlay]\tПресет обновлен!")
+  Log.Write("[Images Overlay] [ ✓ ]\tПресет обновлен!")
 end --UpdatePreset
 
 function script:UseSelectedPresetImageKey(selected_key)
