@@ -2,7 +2,7 @@
   Images Overlay
   Created by Juimun ❤❤❤
   GitHub: https://github.com/Juimun/uc-dota2-scripts
-  Version: 2.3.1
+  Version: 2.3.2
   Description: Рендерит над портретом героя выбранное изображение по ссылке
 ]]--
 
@@ -587,6 +587,16 @@ function script:Initialize()
 
   self.hero = Heroes.GetLocal()
   self.screen_size = Render.ScreenSize()
+
+  self.cached_image = nil
+  self.cached_image_key = nil
+  self.last_hero_pos = nil
+  self.last_scale = nil
+  self.cached_scaled_image = nil
+  self.last_world_to_screen_pos = nil
+  self.last_scale = nil
+  self.last_border_thickness = nil
+  self.cached_scaled_image = nil
 end --Initialize
 
 function script:AddItem()
@@ -796,19 +806,45 @@ function script:OnDraw()
   if not script:CanDraw() then return end
 
   local key = script.ui.preset_selector:List()[script.ui.preset_selector:Get() + 1]
-  local image = Render.LoadImage(script.data[key])
-
-  local scaled_image = Utils.Calculate:ScaleImage(script.screen_size, script.hero, script.ui.border_thickness:Get(), script.ui.custom_scale:Get())
-  local distance = Utils.Calculate.MouseDistance(scaled_image.pos, scaled_image.size)
-
-  local alpha
-  if script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1] == CONFIG.OPACITY.MODE.STATIC then
-    alpha = script.ui.static_opacity_scale:Get()
-  else
-    alpha = Utils.Calculate.Opacity(distance, script.ui.dynamic_opacity_scale:Get(), script.ui.warning_opacity_scale:Get())
+  if script.cached_image_key ~= key then
+    script.cached_image = Render.LoadImage(script.data[key])
+    script.cached_image_key = key
   end --if
 
-  Rendered:FramedImage(script.ui, image, scaled_image, alpha)
+  local world_pos = Entity.GetAbsOrigin(script.hero) + Vector(0, 0, NPC.GetHealthBarOffset(script.hero))
+  local screen_pos = Render.WorldToScreen(world_pos)
+  local current_scale = script.ui.custom_scale:Get()
+  local current_border = script.ui.border_thickness:Get()
+  if not script.last_world_to_screen_pos or
+     (script.last_world_to_screen_pos - screen_pos):Length() > 1 or
+     script.last_scale ~= current_scale or
+     script.last_border_thickness ~= current_border then
+
+    script.cached_scaled_image = Utils.Calculate:ScaleImage(
+      script.screen_size, script.hero, current_border, current_scale
+    )
+    script.last_world_to_screen_pos = screen_pos
+    script.last_scale = current_scale
+    script.last_border_thickness = current_border
+  end --if
+  local scaled_image = script.cached_scaled_image
+
+  local alpha
+  local current_time = GameRules.GetGameTime()
+  if script.ui.alpha_selector:List()[script.ui.alpha_selector:Get() + 1] == CONFIG.OPACITY.MODE.DYNAMIC then
+    if current_time - script.last_opacity_update > 0.016 then
+      local distance = Utils.Calculate.MouseDistance(scaled_image.pos, scaled_image.size)
+      script.cached_alpha = Utils.Calculate.Opacity(distance, 
+        script.ui.dynamic_opacity_scale:Get(),
+        script.ui.warning_opacity_scale:Get())
+      script.last_opacity_update = current_time
+    end --if
+    alpha = script.cached_alpha
+  else
+    alpha = script.ui.static_opacity_scale:Get()
+  end --if
+
+  Rendered:FramedImage(script.ui, script.cached_image, scaled_image, alpha)
 end --OnDraw
 
 return script
